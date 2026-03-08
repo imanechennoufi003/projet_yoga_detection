@@ -8,7 +8,6 @@ import pickle
 import sys
 import warnings
 import pandas as pd  # Pour le tableau comparatif
-
 warnings.filterwarnings("ignore")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from utils import load_images_from_folder, extract_hog_features, save_hog_visualization
