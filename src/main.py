@@ -1,173 +1,155 @@
-import os
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from __future__ import annotations
+
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-import pickle
-import sys
-import warnings
-import pandas as pd  # Pour le tableau comparatif
-warnings.filterwarnings("ignore")
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from utils import load_images_from_folder, extract_hog_features, save_hog_visualization
+import pandas as pd
 
-def train_and_evaluate(data_path, poses, experiment_name):
-    """Fonction qui entraîne et évalue le modèle sur un dataset donné"""
-    print(f"\n{'='*60}")
-    print(f"🧪 EXPÉRIENCE : {experiment_name}")
-    print(f"📁 Chemin : {data_path}")
-    print(f"{'='*60}")
-    
-    X = []
-    y = []
-    valid_poses = []
-    
-    # Chargement des images
-    for label, pose_name in enumerate(poses):
-        folder_path = os.path.join(data_path, pose_name)
-        if not os.path.exists(folder_path):
-            print(f"⚠️ Dossier {pose_name} introuvable")
-            continue
-            
-        images = load_images_from_folder(folder_path)
-        if len(images) == 0:
-            continue
-            
-        features, hog_imgs = extract_hog_features(images)
-        X.append(features)
-        y.extend([label] * len(features))
-        valid_poses.append(pose_name)
-        
-        if len(hog_imgs) > 0 and experiment_name == "Avec Fond (Original)":
-            save_path = os.path.join('..', 'results', 'plots', f'hog_{pose_name}.png')
-            save_hog_visualization(hog_imgs[0], save_path)
-    
-    if len(X) == 0:
-        print(f"❌ Aucune image trouvée pour {experiment_name}")
-        return None, None, None
-    
-    X = np.vstack(X)
-    y = np.array(y)
-    
-    print(f"📊 Total images : {len(X)} | Classes : {valid_poses}")
-    
-    # Split Train/Test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Entraînement SVM
-    print("🔄 Entraînement du modèle SVM...")
-    model = SVC(kernel='linear', C=1.0)
-    model.fit(X_train, y_train)
-    
-    # Évaluation
-    print("🔍 Évaluation...")
-    predictions = model.predict(X_test)
-    accuracy = accuracy_score(y_test, predictions)
-    
-    print(f"✅ PRÉCISION : {accuracy * 100:.2f}%")
-    
-    # Sauvegarde matrice de confusion (seulement pour la dernière expérience)
-    if experiment_name == "Sans Fond (Traitée)":
-        cm = confusion_matrix(y_test, predictions)
-        plt.figure(figsize=(8, 6))
-        plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-        plt.title(f'Matrice de Confusion - {experiment_name}')
-        plt.colorbar()
-        tick_marks = np.arange(len(valid_poses))
-        plt.xticks(tick_marks, valid_poses, rotation=45)
-        plt.yticks(tick_marks, valid_poses)
-        plt.tight_layout()
-        plt.ylabel('Vrai Label')
-        plt.xlabel('Label Prédit')
-        cm_path = os.path.join('..', 'results', 'plots', f'confusion_{experiment_name.replace(" ", "_")}.png')
-        plt.savefig(cm_path)
-        print(f"📈 Matrice sauvegardée : {cm_path}")
-    
-    return accuracy, valid_poses, model
+try:
+    from .pipeline import DEFAULT_CLASSIFIERS, DEFAULT_POSES, run_background_comparison
+except ImportError:
+    from pipeline import DEFAULT_CLASSIFIERS, DEFAULT_POSES, run_background_comparison
 
-def main():
-    print("🧘 PROJET YOGA AI - Étude de l'impact de l'arrière-plan")
-    
-    # Configuration des poses (tes vrais dossiers)
-    poses = ['warrior', 'downdog', 'goddess', 'plank', 'tree']
-    
-    # Liste des expériences à lancer
-    experiments = [
-        {
-            "name": "Avec Fond (Original)",
-            "path": os.path.join('..', 'data', 'raw')
-        },
-        {
-            "name": "Sans Fond (Traitée)",
-            "path": os.path.join('..', 'data', 'raw_sans_fond')  # Dossier créé par rembg
-        }
-    ]
-    
-    results = []
-    
-    # Lancer chaque expérience
-    for exp in experiments:
-        # Vérifier si le dossier existe avant de lancer
-        if os.path.exists(exp["path"]):
-            accuracy, valid_poses, model = train_and_evaluate(
-                exp["path"], poses, exp["name"]
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = PROJECT_ROOT / "data"
+PLOTS_DIR = PROJECT_ROOT / "results" / "plots"
+
+
+def _safe_slug(value: str) -> str:
+    return (
+        value.lower()
+        .replace(" ", "_")
+        .replace("(", "")
+        .replace(")", "")
+        .replace("-", "_")
+    )
+
+
+def save_confusion_matrix_figure(
+    confusion_matrix_data,
+    labels: list[str],
+    title: str,
+    save_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 6))
+    image = ax.imshow(confusion_matrix_data, interpolation="nearest", cmap=plt.cm.Blues)
+    fig.colorbar(image, ax=ax)
+    ax.set_title(title)
+    ax.set_xlabel("Predicted Label")
+    ax.set_ylabel("True Label")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels)
+
+    threshold = confusion_matrix_data.max() / 2 if confusion_matrix_data.size else 0
+    for row_idx in range(confusion_matrix_data.shape[0]):
+        for col_idx in range(confusion_matrix_data.shape[1]):
+            color = "white" if confusion_matrix_data[row_idx, col_idx] > threshold else "black"
+            ax.text(
+                col_idx,
+                row_idx,
+                str(confusion_matrix_data[row_idx, col_idx]),
+                ha="center",
+                va="center",
+                color=color,
             )
-            if accuracy is not None:
-                results.append({
-                    "Expérience": exp["name"],
-                    "Précision (%)": f"{accuracy * 100:.2f}",
-                    "Images": "Voir logs ci-dessus"
-                })
-        else:
-            print(f"\n⚠️ Dossier non trouvé : {exp['path']}")
-            print(f"   → Cette expérience sera ignorée")
-    
-    # 🎯 AFFICHAGE DU TABLEAU COMPARATIF (Pour ta présentation !)
-    if len(results) >= 2:
-        print(f"\n\n{'🏆'*30}")
-        print("📊 RÉSULTATS COMPARATIFS - IMPACT DU FOND")
-        print(f"{'🏆'*30}")
-        
-        df = pd.DataFrame(results)
-        print(df.to_string(index=False))
-        
-        # Calcul de l'amélioration
-        acc_with = float(results[0]["Précision (%)"].replace('%', ''))
-        acc_without = float(results[1]["Précision (%)"].replace('%', ''))
-        improvement = acc_without - acc_with
-        
-        print(f"\n📈 Amélioration : {'+' if improvement >= 0 else ''}{improvement:.2f}%")
-        
-        if improvement > 0:
-            print("✅ Conclusion : Enlever le fond AMÉLIORE la reconnaissance HOG")
-        elif improvement < 0:
-            print("⚠️ Conclusion : Le fond n'a pas d'impact négatif majeur (ou HOG est robuste)")
-        else:
-            print("➡️ Conclusion : L'impact du fond est neutre sur ce dataset")
-            
-        # Sauvegarder le tableau en image pour la présentation
-        plt.figure(figsize=(10, 4))
-        plt.axis('tight')
-        plt.axis('off')
-        table = plt.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
-        table.auto_set_font_size(False)
-        table.set_fontsize(12)
-        table.scale(1.2, 1.5)
-        plt.title("Comparaison : Impact de l'arrière-plan sur la reconnaissance Yoga", fontsize=14, pad=20)
-        
-        save_path = os.path.join('..', 'results', 'plots', 'comparaison_fond.png')
-        plt.savefig(save_path, bbox_inches='tight')
-        print(f"💾 Tableau comparatif sauvegardé : {save_path}")
-        
-    elif len(results) == 1:
-        print(f"\n⚠️ Une seule expérience a réussi. Précision : {results[0]['Précision (%)']}")
-    else:
-        print("\n❌ Aucune expérience n'a pu être lancée. Vérifie tes dossiers.")
-    
-    print(f"\n{'✅'*30}")
-    print("FIN DU TRAITEMENT - Bonne présentation ! 🎓")
-    print(f"{'✅'*30}")
+
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_comparison_chart(summary_df: pd.DataFrame, save_path: Path) -> None:
+    pivot = summary_df.pivot(index="Experience", columns="Classifier", values="Accuracy (%)")
+    ax = pivot.plot(kind="bar", figsize=(10, 5), rot=0, color=["#2563eb", "#0f766e", "#ea580c"])
+    ax.set_title("Comparaison de precision HOG par experience et classifieur")
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_xlabel("Experience")
+    ax.legend(title="Classifier")
+
+    for patch in ax.patches:
+        height = patch.get_height()
+        ax.annotate(
+            f"{height:.2f}",
+            (patch.get_x() + patch.get_width() / 2, height),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            xytext=(0, 4),
+            textcoords="offset points",
+        )
+
+    fig = ax.get_figure()
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_summary_table(summary_df: pd.DataFrame, save_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(12, max(2.8, 0.55 * len(summary_df) + 1.8)))
+    ax.axis("off")
+    table = ax.table(
+        cellText=summary_df.round(2).values,
+        colLabels=summary_df.columns,
+        cellLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.12, 1.4)
+    ax.set_title("Resultats comparatifs HOG + SVM/KNN", fontsize=14, pad=16)
+
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def main() -> None:
+    print("YOGA AI - Comparaison HOG avec SVM et KNN")
+
+    outputs = run_background_comparison(
+        data_root=DATA_ROOT,
+        poses=DEFAULT_POSES,
+        classifiers=DEFAULT_CLASSIFIERS,
+    )
+
+    summary = outputs.get("summary", pd.DataFrame())
+    if summary.empty:
+        print("Aucune experience n'a pu etre executee. Verifie le dataset dans data/raw et data/raw_sans_fond.")
+        return
+
+    print("\nResultats:")
+    print(summary.round(2).to_string(index=False))
+
+    improvement_by_classifier = outputs.get("improvement_by_classifier", {})
+    if improvement_by_classifier:
+        print("\nGain sans fond par classifieur:")
+        for classifier, gain in improvement_by_classifier.items():
+            print(f"- {classifier}: {gain:+.2f}%")
+
+    for model_name, payload in outputs.get("experiments", {}).items():
+        save_path = PLOTS_DIR / f"confusion_{_safe_slug(model_name)}.png"
+        save_confusion_matrix_figure(
+            confusion_matrix_data=payload["confusion_matrix"],
+            labels=payload["labels"],
+            title=f"Matrice de confusion - {model_name}",
+            save_path=save_path,
+        )
+        print(f"Matrice sauvegardee: {save_path}")
+
+    comparison_chart_path = PLOTS_DIR / "comparaison_fond.png"
+    save_comparison_chart(summary, comparison_chart_path)
+    print(f"Graphique comparatif sauvegarde: {comparison_chart_path}")
+
+    summary_table_path = PLOTS_DIR / "comparaison_modeles_table.png"
+    save_summary_table(summary, summary_table_path)
+    print(f"Tableau comparatif sauvegarde: {summary_table_path}")
+
 
 if __name__ == "__main__":
     main()

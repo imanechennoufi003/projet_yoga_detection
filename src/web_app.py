@@ -9,7 +9,9 @@ import streamlit as st
 
 try:
     from .pipeline import (
+        DEFAULT_CLASSIFIERS,
         DEFAULT_POSES,
+        classifier_label,
         load_models_bundle,
         predict_pose,
         run_background_comparison,
@@ -17,7 +19,9 @@ try:
     )
 except ImportError:
     from pipeline import (
+        DEFAULT_CLASSIFIERS,
         DEFAULT_POSES,
+        classifier_label,
         load_models_bundle,
         predict_pose,
         run_background_comparison,
@@ -116,6 +120,12 @@ def training_controls() -> tuple[bool, dict]:
         options=DEFAULT_POSES,
         default=DEFAULT_POSES,
     )
+    selected_classifiers = st.sidebar.multiselect(
+        "Classifieurs",
+        options=DEFAULT_CLASSIFIERS,
+        default=DEFAULT_CLASSIFIERS,
+        format_func=classifier_label,
+    )
     max_images = st.sidebar.slider(
         "Max images par classe",
         min_value=100,
@@ -142,6 +152,7 @@ def training_controls() -> tuple[bool, dict]:
 
     params = {
         "poses": selected_poses,
+        "classifiers": selected_classifiers,
         "max_images_per_class": max_images,
         "epochs": epochs,
         "test_size": test_size,
@@ -154,12 +165,16 @@ def launch_training(params: dict) -> None:
     if not params["poses"]:
         st.warning("Selectionne au moins une pose.")
         return
+    if not params["classifiers"]:
+        st.warning("Selectionne au moins un classifieur.")
+        return
 
     try:
         with st.spinner("Entrainement des experiences en cours..."):
             outputs = run_background_comparison(
                 data_root=DATA_ROOT,
                 poses=params["poses"],
+                classifiers=params["classifiers"],
                 test_size=params["test_size"],
                 random_state=params["random_state"],
                 max_images_per_class=params["max_images_per_class"],
@@ -198,7 +213,7 @@ def build_learning_curves_figure(curve: pd.DataFrame, exp_name: str) -> plt.Figu
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
     fig.patch.set_facecolor("#efefef")
 
-    epochs = curve["epoch"]
+    x_values = curve["train_samples"] if "train_samples" in curve else curve["epoch"]
     train_acc = curve["train_accuracy"]
     valid_acc = curve["test_accuracy"]
     train_loss = curve["train_loss"]
@@ -215,18 +230,46 @@ def build_learning_curves_figure(curve: pd.DataFrame, exp_name: str) -> plt.Figu
     loss_max = max(train_loss.max(), valid_loss.max())
     loss_pad = max(0.02, (loss_max - loss_min) * 0.12)
 
-    axes[0].plot(epochs, train_acc, color="#1f77b4", linewidth=1.7, label="Training Accuracy")
-    axes[0].plot(epochs, valid_acc, color="#ff7f0e", linewidth=1.7, label="Validation Accuracy")
-    axes[0].set_title("Accuracy over Epochs")
-    axes[0].set_xlabel("Epoch")
+    axes[0].plot(
+        x_values,
+        train_acc,
+        color="#1f77b4",
+        linewidth=1.7,
+        marker="o",
+        label="Training Accuracy",
+    )
+    axes[0].plot(
+        x_values,
+        valid_acc,
+        color="#ff7f0e",
+        linewidth=1.7,
+        marker="o",
+        label="Validation Accuracy",
+    )
+    axes[0].set_title("Accuracy over Training Samples")
+    axes[0].set_xlabel("Training Samples")
     axes[0].set_ylabel("Accuracy")
     axes[0].set_ylim(acc_lower, 1.01)
     axes[0].legend(loc="lower right")
 
-    axes[1].plot(epochs, train_loss, color="#1f77b4", linewidth=1.7, label="Training Loss")
-    axes[1].plot(epochs, valid_loss, color="#ff7f0e", linewidth=1.7, label="Validation Loss")
-    axes[1].set_title("Loss over Epochs")
-    axes[1].set_xlabel("Epoch")
+    axes[1].plot(
+        x_values,
+        train_loss,
+        color="#1f77b4",
+        linewidth=1.7,
+        marker="o",
+        label="Training Loss",
+    )
+    axes[1].plot(
+        x_values,
+        valid_loss,
+        color="#ff7f0e",
+        linewidth=1.7,
+        marker="o",
+        label="Validation Loss",
+    )
+    axes[1].set_title("Loss over Training Samples")
+    axes[1].set_xlabel("Training Samples")
     axes[1].set_ylabel("Loss")
     axes[1].set_ylim(loss_min - loss_pad, loss_max + loss_pad)
     axes[1].legend(loc="upper right")
@@ -239,6 +282,7 @@ def build_learning_curves_figure(curve: pd.DataFrame, exp_name: str) -> plt.Figu
 def show_dashboard(outputs: dict) -> None:
     summary = outputs.get("summary", pd.DataFrame())
     improvement = outputs.get("improvement")
+    improvement_by_classifier = outputs.get("improvement_by_classifier", {})
 
     st.markdown(
         """
@@ -254,15 +298,15 @@ def show_dashboard(outputs: dict) -> None:
 
     top1, top2, top3 = st.columns(3)
     with top1:
-        metric_card("Experiences executees", str(len(summary)))
+        metric_card("Configurations entrainees", str(len(summary)))
     with top2:
         best = f"{summary['Accuracy (%)'].max():.2f}%" if not summary.empty else "-"
         metric_card("Meilleure precision", best)
     with top3:
         if improvement is None:
-            metric_card("Gain sans fond", "N/A")
+            metric_card("Gain moyen sans fond", "N/A")
         else:
-            metric_card("Gain sans fond", f"{improvement:+.2f}%")
+            metric_card("Gain moyen sans fond", f"{improvement:+.2f}%")
 
     if summary.empty:
         st.info("Lance l'entrainement depuis la barre laterale pour afficher les resultats.")
@@ -272,12 +316,27 @@ def show_dashboard(outputs: dict) -> None:
         summary,
         x="Experience",
         y="Accuracy (%)",
-        color="Experience",
+        color="Classifier",
+        barmode="group",
         text=summary["Accuracy (%)"].map(lambda v: f"{v:.2f}%"),
-        title="Comparaison de precision par experience",
+        hover_data=["Model", "Train Samples", "Test Samples"],
+        title="Comparaison de precision par experience et classifieur",
     )
-    fig.update_layout(showlegend=False, height=420)
+    fig.update_layout(height=420)
     st.plotly_chart(fig, use_container_width=True)
+
+    if improvement_by_classifier:
+        gain_df = pd.DataFrame(
+            [
+                {
+                    "Classifier": classifier,
+                    "Gain sans fond (%)": gain,
+                }
+                for classifier, gain in improvement_by_classifier.items()
+            ]
+        )
+        st.markdown("### Gain par classifieur")
+        st.dataframe(gain_df.round(3), use_container_width=True)
 
     st.dataframe(summary.round(3), use_container_width=True)
 
@@ -296,7 +355,7 @@ def show_pose_detection(outputs: dict) -> None:
         (
             idx
             for idx, name in enumerate(model_names)
-            if "Sans Fond (Traitee) (saved)" in name
+            if "Sans Fond (Traitee)" in name
         ),
         0,
     )
@@ -365,7 +424,7 @@ def show_model_insights(outputs: dict) -> None:
     with tab1:
         curve = payload["learning_curve"]
         st.caption(
-            "Diagramme au format demande: accuracy et loss sur deux graphes cote a cote."
+            "Evolution de l'accuracy et de la loss en fonction du volume d'entrainement."
         )
         fig = build_learning_curves_figure(curve, exp_name)
         st.pyplot(fig, use_container_width=True)
