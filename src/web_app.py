@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
 try:
     from .pipeline import (
         DEFAULT_CLASSIFIERS,
@@ -50,6 +47,10 @@ def setup_page() -> None:
             font-family: 'Manrope', sans-serif;
             background: radial-gradient(circle at top right, #eaf6ff 0%, #f8fbff 45%, #f4f7fb 100%);
         }
+        /* Force general text color to black except for buttons */
+        .stApp p, .stApp span, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {
+            color: #000000 !important;
+        }
         section[data-testid="stSidebar"] {
             background: #ffffff;
             border-right: 1px solid #e6edf7;
@@ -75,13 +76,13 @@ def setup_page() -> None:
             margin-bottom: 10px;
         }
         .metric-label {
-            color: #5c6f8f;
+            color: #000000;
             font-size: 0.86rem;
             font-weight: 600;
             margin-bottom: 4px;
         }
         .metric-value {
-            color: #111e37;
+            color: #000000;
             font-size: 1.35rem;
             font-weight: 800;
         }
@@ -287,8 +288,8 @@ def show_dashboard(outputs: dict) -> None:
     st.markdown(
         """
         <div class="hero-card">
-            <h2 style="margin-bottom:4px;color:#13233f;">Yoga AI Pose Detection Dashboard</h2>
-            <p style="margin:0;color:#5f6f8a;">
+            <h2 style="margin-bottom:4px;color:#000000;">Yoga AI Pose Detection Dashboard</h2>
+            <p style="margin:0;color:#000000;">
             Interface web intuitive pour comparer l'impact du fond et monitorer les performances IA.
             </p>
         </div>
